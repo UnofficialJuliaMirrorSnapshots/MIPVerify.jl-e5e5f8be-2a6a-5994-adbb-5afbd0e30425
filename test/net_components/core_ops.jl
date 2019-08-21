@@ -1,11 +1,10 @@
-using Base.Test
+using Test
 using JuMP
 using MathProgBase
 using MIPVerify
 using MIPVerify: relu, get_target_indexes, set_max_indexes, get_max_index, matmul, tight_upperbound, tight_lowerbound, abs_ge, masked_relu, is_constant, get_tightening_algorithm, mip, lp, interval_arithmetic, DEFAULT_TIGHTENING_ALGORITHM, TighteningAlgorithm, MIPVerifyExt
 using ConditionalJuMP
-isdefined(:TestHelpers) || include("../TestHelpers.jl")
-using TestHelpers: get_new_model
+@isdefined(TestHelpers) || include("../TestHelpers.jl")
 
 function count_binary_variables(m::Model)
     count(x -> x == :Bin, m.colCat)
@@ -14,7 +13,7 @@ end
 @testset "core_ops.jl" begin
     @testset "is_constant" begin
         @testset "JuMP.AffExpr" begin
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             @test is_constant(zero(JuMP.Variable))
             @test is_constant(one(JuMP.Variable))
             x = @variable(m)
@@ -23,14 +22,14 @@ end
             @test !is_constant(z)
         end
         @testset "JuMP.Variable" begin
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             x = @variable(m)
             @test !is_constant(x)
         end
     end
 
     @testset "getmodel" begin
-        m=get_new_model()
+        m = TestHelpers.get_new_model()
         y1 = @variable(m)
         x1 = one(JuMP.Variable)*1
         x2 = one(JuMP.Variable)*2
@@ -39,45 +38,45 @@ end
     end
 
     @testset "get_tightening_algorithm" begin
-        m = get_new_model()
+        m = TestHelpers.get_new_model()
         
         tightening_algorithms = [interval_arithmetic, mip, lp]
 
         @testset "if variable known to be constant, always use interval_arithmetic" begin
             x = one(JuMP.Variable) # is_constant(x)==true
             for alg in tightening_algorithms
-                @test get_tightening_algorithm(x, Nullable{TighteningAlgorithm}(alg)) == interval_arithmetic
+                @test get_tightening_algorithm(x, alg) == interval_arithmetic
             end
-            @test get_tightening_algorithm(x, Nullable{TighteningAlgorithm}()) == interval_arithmetic
+            @test get_tightening_algorithm(x, nothing) == interval_arithmetic
         end
 
         @testset "if variable not known to be constant" begin
             @testset "use tightening algorithm if specified" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 y = @variable(m)
                 for alg in tightening_algorithms
-                    @test get_tightening_algorithm(y, Nullable{TighteningAlgorithm}(alg)) == alg
+                    @test get_tightening_algorithm(y, alg) == alg
                 end
             end
             @testset "fall back to model-level tightening algorithm if specified" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 y = @variable(m)
                 for alg in tightening_algorithms
                     m.ext[:MIPVerify] = MIPVerifyExt(alg)
-                    @test get_tightening_algorithm(y, Nullable{TighteningAlgorithm}()) == alg
+                    @test get_tightening_algorithm(y, nothing) == alg
                 end
             end
             @testset "fall back to package default tightening algorithm as last resort" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 y = @variable(m)
-                @test get_tightening_algorithm(y, Nullable{TighteningAlgorithm}()) == DEFAULT_TIGHTENING_ALGORITHM
+                @test get_tightening_algorithm(y, nothing) == DEFAULT_TIGHTENING_ALGORITHM
             end
         end
     end
 
     @testset "maximum(xs)" begin
         @testset "single variable to maximize over" begin
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             x1 = @variable(m, lowerbound=0, upperbound=3)
             xmax = MIPVerify.maximum([x1])
 
@@ -90,7 +89,7 @@ end
             @test solve_output≈3
         end
         @testset "multiple variables to maximize over, some constant" begin
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             x0 = one(JuMP.Variable) # add constant variable at start
             x1 = @variable(m, lowerbound=0, upperbound=3)
             x2 = @variable(m, lowerbound=4, upperbound=5)
@@ -110,7 +109,7 @@ end
             @test solve_output≈7
         end
         @testset "single variable to maximize over, constant" begin
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             x1 = one(JuMP.Variable)*3
             xmax = MIPVerify.maximum([x1])
 
@@ -121,7 +120,7 @@ end
             @test solve_output≈3
         end
         @testset "multiple variables to maximize over, all constant" begin
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             x1 = one(JuMP.Variable)
             x2 = one(JuMP.Variable)*2
             xmax = MIPVerify.maximum([x1, x2])
@@ -133,13 +132,13 @@ end
             @test solve_output≈2
         end
         @testset "regression test to deal with indexing issue in v0.8.0" begin
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             x1 = @variable(m, lowerbound=-2, upperbound=2) # upperbound of this variable is low enough that it gets filtered away 
             x2 = @variable(m, lowerbound=2.5, upperbound=100)
             x3 = @variable(m, lowerbound=3, upperbound=3.3)
             xmax = MIPVerify.maximum([x1, x2, x3])
             
-            # an efficient implementation does not add binary variables for x1, x4 and x5
+            # an efficient implementation does not add binary variables for x1
             @test count_binary_variables(m)<= 2
             
             # elements of the input array are made to take their maximum value
@@ -149,11 +148,26 @@ end
             solve_output = getvalue(xmax)
             @test solve_output≈100
         end
+        @testset "lowerbound on one matches upperbound on another; output expected to be constant" begin
+            m = TestHelpers.get_new_model()
+            x1 = @variable(m, lowerbound=-6, upperbound=2)
+            x2 = @variable(m, lowerbound=2, upperbound=2)
+
+            xmax = MIPVerify.maximum([x1, x2])
+            
+            # no binary variables need to be introduced
+            @test count_binary_variables(m) == 0
+            
+            solve(m)
+            
+            solve_output = getvalue(xmax)
+            @test solve_output≈2
+        end
     end
 
     @testset "maximum(xs, ls, us)" begin
         @testset "single variable to maximize over" begin
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             x1 = @variable(m, lowerbound=0, upperbound=3)
             xmax = MIPVerify.maximum([x1], [0], [1])
 
@@ -166,7 +180,7 @@ end
             @test solve_output≈3
         end
         @testset "multiple variables to maximize over, all constant" begin
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             x1 = one(JuMP.Variable)
             x2 = one(JuMP.Variable)*2
             xmax = MIPVerify.maximum([x1, x2], [1, 2], [1, 2])
@@ -181,13 +195,33 @@ end
 
     @testset "maximum_ge" begin
         @testset "multiple variables to maximize over, all constant" begin
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             x1 = one(JuMP.Variable)
             x2 = one(JuMP.Variable)*2
-            xmax = MIPVerify.maximum([x1, x2])
+            xmax = MIPVerify.maximum_ge([x1, x2])
 
             solve_output = getvalue(xmax)
             @test solve_output≈2
+        end
+    end
+
+    @testset "abs_ge" begin
+        @testset "positive constant input" begin
+            m = TestHelpers.get_new_model()
+            x = one(JuMP.Variable)
+            x_abs = MIPVerify.abs_ge(x)
+
+            solve_output = getvalue(x_abs)
+            @test solve_output≈1
+        end
+
+        @testset "negative constant input" begin
+            m = TestHelpers.get_new_model()
+            x = one(JuMP.Variable)*-1
+            x_abs = MIPVerify.abs_ge(x)
+
+            solve_output = getvalue(x_abs)
+            @test solve_output≈1
         end
     end
 
@@ -206,7 +240,7 @@ end
                 @test x_r.constant == x.constant
             end
             @testset "strictly non-negative" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 x = @variable(m, lowerbound=0, upperbound=1)
                 x_r = relu(x)
                 
@@ -218,7 +252,7 @@ end
                 @test getobjectivevalue(m)≈1
             end
             @testset "strictly non-positive" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 x = @variable(m, lowerbound=-1, upperbound=0)
                 x_r = relu(x)
 
@@ -230,7 +264,7 @@ end
                 @test getobjectivevalue(m)≈1
             end
             @testset "regular" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 x = @variable(m, lowerbound=-1, upperbound=2)
                 x_r = relu(x)
 
@@ -247,7 +281,7 @@ end
     @testset "relu(x, l, u)" begin
         @testset "Variable Input" begin
             @testset "strictly non-negative" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 x = @variable(m)
                 x_r=relu(x, 1, 2)
                 @test count_binary_variables(m)==0
@@ -257,14 +291,14 @@ end
                 @test getobjectivevalue(m)≈0
             end
             @testset "strictly non-positive" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 x = @variable(m)
                 x_r = relu(x, -2, -1)
                 @test upperbound(x_r) == 0
                 @test lowerbound(x_r) == 0
             end
             @testset "constant" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 x = @variable(m)
                 x_r = relu(x, 2, 2)
                 @test upperbound(x_r) == 2
@@ -288,7 +322,7 @@ end
         
         @testset "Variable Input, single" begin
             @testset "mask is negative" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 x = @variable(m, lowerbound=-1, upperbound=2)
                 x_r = masked_relu(x, -1)
 
@@ -308,7 +342,7 @@ end
                 @test getvalue(x_r)≈0
             end
             @testset "mask is 0" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 x = @variable(m, lowerbound=-1, upperbound=2)
                 x_r = masked_relu(x, 0)
 
@@ -328,7 +362,7 @@ end
                 @test getvalue(x_r)≈0
             end
             @testset "mask is positive" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 x = @variable(m, lowerbound=-1, upperbound=2)
                 x_r = masked_relu(x, 1)
 
@@ -351,13 +385,13 @@ end
 
         @testset "Variable Input, array" begin
             @testset "invalid mask" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 @variable(m, x[1:4], lowerbound=-1, upperbound=2)
 
                 @test_throws AssertionError masked_relu(x, [-1, 0, 1])
             end
             @testset "valid mask" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 @variable(m, x[1:3], lowerbound=-1, upperbound=2)
 
                 x_r = masked_relu(x, [-1, 0, 1])
@@ -379,7 +413,7 @@ end
 
     @testset "abs_ge" begin
         @testset "strictly non-negative" begin
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             x = @variable(m, lowerbound=0, upperbound=1)
             x_a = abs_ge(x)
             
@@ -391,7 +425,7 @@ end
             @test getobjectivevalue(m)≈1
         end
         @testset "strictly non-positive" begin
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             x = @variable(m, lowerbound=-1, upperbound=0)
             x_a = abs_ge(x)
 
@@ -403,7 +437,7 @@ end
             @test getobjectivevalue(m)≈3
         end
         @testset "regular" begin
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             x = @variable(m, lowerbound=-2, upperbound=2)
             x_a = abs_ge(x)
 
@@ -416,7 +450,7 @@ end
         end
         @testset "abs_ge is not strict" begin
             # in particular we only need to satisfy the property |x_a| > x
-            m = get_new_model()
+            m = TestHelpers.get_new_model()
             x = @variable(m, lowerbound=-4, upperbound=2)
             x_a = abs_ge(x)
 
@@ -441,7 +475,7 @@ end
     @testset "set_max_indexes" begin
         @testset "single target index" begin
             @testset "vanilla" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 x = @variable(m, [i=1:3])
                 @constraint(m, x[2] == 5)
                 @constraint(m, x[3] == 1)
@@ -452,7 +486,7 @@ end
             end
             @testset "with tolerance" begin
                 tolerance = 3
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 x = @variable(m, [i=1:3])
                 @constraint(m, x[2] == 5)
                 @constraint(m, x[3] == 1)
@@ -464,7 +498,7 @@ end
         end
         @testset "multiple target indexes" begin
             @testset "vanilla" begin
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 x = @variable(m, [i=1:3])
                 @constraint(m, x[1] == 5)
                 setlowerbound(x[2], 0)
@@ -479,7 +513,7 @@ end
             end
             @testset "with tolerance" begin
                 tolerance = 3
-                m = get_new_model()
+                m = TestHelpers.get_new_model()
                 x = @variable(m, [i=1:3])
                 @constraint(m, x[1] == 5)
                 setlowerbound(x[2], 0)
@@ -494,7 +528,7 @@ end
             end
             @testset "first JuMPLinearType is constant" begin
                 @testset "selected variable has non-constant value, and can take the maximum value" begin
-                    m = get_new_model()
+                    m = TestHelpers.get_new_model()
                     x1 = one(JuMP.Variable)
                     x2 = @variable(m, lowerbound=4, upperbound=5)
                     set_max_indexes(m, [x1, x2], [2])
@@ -503,7 +537,7 @@ end
                     @test getvalue(x2)≈4
                 end
                 @testset "selected variable has non-constant value, and cannot take the maximum value" begin
-                    m = get_new_model()
+                    m = TestHelpers.get_new_model()
                     x1 = one(JuMP.Variable)
                     x2 = @variable(m, lowerbound=-5, upperbound=-4)
                     set_max_indexes(m, [x1, x2], [2])
@@ -512,7 +546,7 @@ end
                     @test solve_status == :Infeasible
                 end
                 @testset "selected variable has constant value, and can take the maximum value" begin
-                    m = get_new_model()
+                    m = TestHelpers.get_new_model()
                     x1 = one(JuMP.Variable)
                     x2 = @variable(m, lowerbound=-5, upperbound=-4)
                     set_max_indexes(m, [x1, x2], [1])
@@ -521,7 +555,7 @@ end
                     @test getvalue(x2)≈-5
                 end
                 @testset "selected variable has constant value, and cannot take the maximum value" begin
-                    m = get_new_model()
+                    m = TestHelpers.get_new_model()
                     x1 = one(JuMP.Variable)
                     x2 = @variable(m, lowerbound=4, upperbound=5)
                     set_max_indexes(m, [x1, x2], [1])
@@ -535,7 +569,7 @@ end
 
     @testset "Bounds" begin
         @testset "Bounds on variables" begin
-        m = get_new_model()
+        m = TestHelpers.get_new_model()
         x = @variable(m, [i=1:2], lowerbound = -1, upperbound = 1)
             
         A1 = [1 -0.5; -0.5 1]
@@ -557,8 +591,8 @@ end
                 m.ext[:MIPVerify] = MIPVerify.MIPVerifyExt(algorithm)
                 output = (x |> p1 |> ReLU() |> p2)
 
-                @test tight_upperbound(output[1], nta=Nullable(algorithm))≈u
-                @test tight_lowerbound(output[2], nta=Nullable(algorithm))≈l
+                @test tight_upperbound(output[1], nta=algorithm)≈u
+                @test tight_lowerbound(output[2], nta=algorithm)≈l
             end
         end
         end
@@ -569,5 +603,13 @@ end
             @test tight_lowerbound(x1) == 1
         end
 
+    end
+
+    @testset "get_relu_type" begin
+        @test MIPVerify.get_relu_type(-3, -1) == MIPVerify.zero_output
+        @test MIPVerify.get_relu_type(0, 0) == MIPVerify.zero_output # special case; this can go either way
+        @test MIPVerify.get_relu_type(1, 1) == MIPVerify.constant_output
+        @test MIPVerify.get_relu_type(-3, 5) == MIPVerify.split
+        @test MIPVerify.get_relu_type(3, 5) == MIPVerify.linear_in_input
     end
 end
